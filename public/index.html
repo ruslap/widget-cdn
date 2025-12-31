@@ -368,8 +368,15 @@
 
         /* Responsive */
         @media (max-width: 640px) {
+            body {
+                padding: 80px 0;
+                padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+            }
+
             .container {
                 padding: 0 20px;
+                padding-left: calc(20px + env(safe-area-inset-left, 0px));
+                padding-right: calc(20px + env(safe-area-inset-right, 0px));
             }
 
             .cta-section {
@@ -381,6 +388,9 @@
             .btn-secondary {
                 width: 100%;
                 justify-content: center;
+                padding: 14px 20px;
+                -webkit-tap-highlight-color: transparent;
+                touch-action: manipulation;
             }
 
             .pointer {
@@ -389,6 +399,20 @@
 
             .code-block pre {
                 font-size: 11px;
+            }
+
+            .footer {
+                position: relative;
+                margin-top: 40px;
+                padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+            }
+
+            h1 {
+                font-size: clamp(36px, 10vw, 48px);
+            }
+
+            .description {
+                font-size: 16px;
             }
         }
     </style>

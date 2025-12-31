@@ -1495,6 +1495,10 @@
         height: 24px;
       }
 
+      .launcher.open {
+        display: none;
+      }
+
       .panel {
         position: fixed;
         top: 0;
