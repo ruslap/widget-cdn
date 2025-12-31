@@ -298,9 +298,11 @@
 
     /* ===== LAUNCHER BUTTON ===== */
     .launcher {
-      position: absolute;
+      position: fixed;
       bottom: 24px;
       right: 24px;
+      bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+      right: calc(24px + env(safe-area-inset-right, 0px));
       width: 64px;
       height: 64px;
       border-radius: var(--radius-full);
@@ -314,12 +316,17 @@
       z-index: var(--z-launcher);
       box-shadow: var(--shadow-lg);
       overflow: visible;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+      -webkit-touch-callout: none;
+      user-select: none;
     }
 
     .launcher::before {
       content: '';
       position: absolute;
       inset: 0;
+      border-radius: var(--radius-full);
       background: radial-gradient(circle at center, rgba(255,255,255,0.3) 0%, transparent 70%);
       opacity: 0;
       transition: opacity var(--duration-base);
@@ -423,12 +430,13 @@
 
     /* ===== CHAT PANEL ===== */
     .panel {
-      position: absolute;
-      bottom: 104px;
-      right: 24px;
+      position: fixed;
+      bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+      right: calc(24px + env(safe-area-inset-right, 0px));
       width: 400px;
       height: 600px;
       max-height: calc(100vh - 130px);
+      max-height: calc(100dvh - 130px);
       background: var(--bg-primary);
       border-radius: var(--radius-xl);
       border: 1px solid var(--border-light);
@@ -440,6 +448,7 @@
       opacity: 0;
       transform: translateY(16px) scale(0.94);
       transform-origin: bottom right;
+      -webkit-overflow-scrolling: touch;
     }
 
     .panel::before {
@@ -1475,22 +1484,81 @@
     /* ===== RESPONSIVE ===== */
     @media (max-width: 480px) {
       .launcher {
-        bottom: var(--space-4);
-        ${position === 'left' ? 'left' : 'right'}: var(--space-4);
+        bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+        ${position === 'left' ? 'left' : 'right'}: calc(var(--space-4) + env(safe-area-inset-right, 0px));
+        width: 56px;
+        height: 56px;
+      }
+
+      .launcher svg {
+        width: 24px;
+        height: 24px;
       }
 
       .panel {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
         width: 100%;
         height: 100%;
         max-height: 100%;
-        bottom: 0;
-        ${position === 'left' ? 'left' : 'right'}: 0;
+        max-height: 100dvh;
         border-radius: 0;
         border: none;
+        transform: translateY(0) scale(1);
+      }
+      
+      .panel.open {
+        animation: panel-enter-mobile var(--duration-slow) var(--ease-out) forwards;
+      }
+      
+      .panel.closing {
+        animation: panel-exit-mobile var(--duration-base) var(--ease-in-out) forwards;
       }
 
       .emoji-picker {
         width: calc(100% - var(--space-8));
+        left: var(--space-4);
+      }
+      
+      .composer {
+        padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+      }
+      
+      .powered {
+        padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+      }
+      
+      .messages {
+        -webkit-overflow-scrolling: touch;
+      }
+      
+      .composer-input {
+        font-size: 16px; /* Prevents iOS zoom on focus */
+      }
+    }
+    
+    @keyframes panel-enter-mobile {
+      from {
+        opacity: 0;
+        transform: translateY(100%);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    @keyframes panel-exit-mobile {
+      from {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      to {
+        opacity: 0;
+        transform: translateY(100%);
       }
     }
 
