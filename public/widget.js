@@ -1,5 +1,5 @@
 /**
- * ChatIQ Widget v3.0.0 - Enhanced Edition
+ * ChatIQ Widget v3.1.0 - Enhanced Edition
  * Premium chat widget with killer features
  * 
  * New Features:
@@ -16,145 +16,212 @@
  * - ⌨️ Typing indicators with names
  * - 🎭 Status presence (online/away/busy)
  * - 📱 Mobile-optimized gestures
+ * - 🔧 Configurable via window.chtq
  * 
- * Usage:
+ * Usage (New):
+ * <script async src="https://widget-cdn-chatiq.vercel.app/widget.js"></script>
+ * <script>
+ *   window.chtq = {
+ *     organizationId: "your-uuid",
+ *     language: "uk",
+ *     color: "#6366F1",
+ *     position: "right",
+ *     size: "standard"
+ *   }
+ * </script>
+ * 
+ * Usage (Legacy):
  * <script src="https://cdn.chatiq.io/widget.js" data-site-id="YOUR_SITE_ID"></script>
  */
 
 (function () {
-    'use strict';
+  'use strict';
 
-    // Configuration
-    const WIDGET_VERSION = '3.0.0';
-    const API_URL = 'wss://api.chatiq.io';
-    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-    const ALLOWED_FILE_TYPES = ['image/*', 'application/pdf', '.doc', '.docx', '.txt'];
+  // Configuration
+  const WIDGET_VERSION = '3.1.0';
+  const API_URL = 'https://api-server-chatiq.onrender.com'; // Production
+  // const API_URL = 'http://localhost:3000'; // Local development
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+  const ALLOWED_FILE_TYPES = ['image/*', 'application/pdf', '.doc', '.docx', '.txt'];
 
-    // Get configuration
-    const config = window.ChatIQConfig || {};
-    const accentColor = config.accentColor || '#B6FF00';
-    const position = config.position || 'right';
-    const agentName = config.agentName || 'Support Team';
-    const agentAvatar = config.agentAvatar || null;
-    let soundEnabled = localStorage.getItem('chatiq_sound_enabled') !== 'false';
+  // Get configuration from new window.chtq or legacy window.ChatIQConfig / script attribute
+  const chtqConfig = window.chtq || {};
+  const legacyConfig = window.ChatIQConfig || {};
+  const currentScript = document.currentScript;
 
-    // Get siteId from script tag
-    const currentScript = document.currentScript;
-    const siteId = currentScript?.getAttribute('data-site-id');
+  // Merge configurations with priority: chtq > legacy > script attributes > defaults
+  const config = {
+    organizationId: chtqConfig.organizationId || legacyConfig.siteId || currentScript?.getAttribute('data-site-id') || null,
+    language: chtqConfig.language || legacyConfig.language || 'uk',
+    color: chtqConfig.color || legacyConfig.accentColor || '#6366F1',
+    position: chtqConfig.position || legacyConfig.position || 'right',
+    size: chtqConfig.size || legacyConfig.size || 'standard',
+    theme: chtqConfig.theme || legacyConfig.theme || 'light',
+    agentName: chtqConfig.agentName || legacyConfig.agentName || 'Support Team',
+    agentAvatar: chtqConfig.agentAvatar || legacyConfig.agentAvatar || null,
+  };
 
-    if (!siteId) {
-        console.warn('[ChatIQ] Missing data-site-id attribute');
-        return;
+  // Use organizationId as siteId for backward compatibility
+  const siteId = config.organizationId;
+  const accentColor = config.color;
+  const position = config.position;
+  const widgetSize = config.size;
+  const agentName = config.agentName;
+  const agentAvatar = config.agentAvatar;
+  let soundEnabled = localStorage.getItem('chatiq_sound_enabled') !== 'false';
+
+  if (!siteId) {
+    console.warn('[Chtq] Missing organizationId. Please configure window.chtq or use data-site-id attribute.');
+    return;
+  }
+
+  // Generate or retrieve visitorId
+  function getVisitorId() {
+    const storageKey = 'chtq_visitor_id';
+    let visitorId = localStorage.getItem(storageKey);
+
+    if (!visitorId) {
+      visitorId = 'v_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+      localStorage.setItem(storageKey, visitorId);
     }
 
-    // Generate or retrieve visitorId
-    function getVisitorId() {
-        const storageKey = 'chatiq_visitor_id';
-        let visitorId = localStorage.getItem(storageKey);
+    return visitorId;
+  }
 
-        if (!visitorId) {
-            visitorId = 'v_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-            localStorage.setItem(storageKey, visitorId);
-        }
+  const visitorId = getVisitorId();
 
-        return visitorId;
+  // Detect theme preference
+  function getThemePreference() {
+    const themeConfig = config.theme;
+    if (themeConfig === 'auto') {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }
+    return themeConfig;
+  }
 
-    const visitorId = getVisitorId();
+  let currentTheme = getThemePreference();
 
-    // Detect theme preference
-    function getThemePreference() {
-        const themeConfig = config.theme || 'light';
-        if (themeConfig === 'auto') {
-            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-        }
-        return themeConfig;
+  console.log(`[Chtq] Widget v${WIDGET_VERSION} initialized`);
+  console.log(`[Chtq] Organization ID: ${siteId}`);
+  console.log(`[Chtq] Visitor ID: ${visitorId}`);
+  console.log(`[Chtq] Config:`, { color: accentColor, position, size: widgetSize });
+
+  // Socket.IO Integration
+  let socket = null;
+
+  function initSocket() {
+    if (window.io) {
+      connectSocket();
+    } else {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.socket.io/4.7.2/socket.io.min.js';
+      script.onload = connectSocket;
+      document.head.appendChild(script);
     }
+  }
 
-    let currentTheme = getThemePreference();
+  function connectSocket() {
+    socket = window.io(API_URL);
 
-    console.log(`[ChatIQ] Widget v${WIDGET_VERSION} initialized`);
-    console.log(`[ChatIQ] Site ID: ${siteId}`);
-    console.log(`[ChatIQ] Visitor ID: ${visitorId}`);
-
-    // Create widget container with Shadow DOM
-    const widgetContainer = document.createElement('div');
-    widgetContainer.id = 'chatiq-widget';
-    // Fix container to viewport to avoid layout interference
-    Object.assign(widgetContainer.style, {
-        position: 'fixed',
-        bottom: '0',
-        right: '0',
-        width: '0',
-        height: '0',
-        zIndex: '2147483647',
-        overflow: 'visible'
+    socket.on('connect', () => {
+      console.log('[ChatIQ] Connected to server');
+      socket.emit('visitor:join', { siteId, visitorId });
     });
-    document.body.appendChild(widgetContainer);
 
-    const shadow = widgetContainer.attachShadow({ mode: 'closed' });
+    socket.on('admin:message', (msg) => {
+      showTyping();
+      setTimeout(() => {
+        addMessage(msg.text, 'bot');
+      }, 800);
+    });
 
-    // Generate accent color variants
-    function hexToHSL(hex) {
-        let r = parseInt(hex.slice(1, 3), 16) / 255;
-        let g = parseInt(hex.slice(3, 5), 16) / 255;
-        let b = parseInt(hex.slice(5, 7), 16) / 255;
+    socket.on('chat:message', (msg) => {
+      if (msg.from === 'visitor' && msg.visitorId !== visitorId) {
+        // Handle sync across tabs if needed
+      }
+    });
+  }
 
-        let max = Math.max(r, g, b), min = Math.min(r, g, b);
-        let h, s, l = (max + min) / 2;
+  initSocket();
 
-        if (max === min) {
-            h = s = 0;
-        } else {
-            let d = max - min;
-            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-            switch (max) {
-                case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
-                case g: h = ((b - r) / d + 2) / 6; break;
-                case b: h = ((r - g) / d + 4) / 6; break;
-            }
-        }
+  // Create widget container with Shadow DOM
+  const widgetContainer = document.createElement('div');
+  widgetContainer.id = 'chatiq-widget';
+  // Fix container to viewport to avoid layout interference
+  Object.assign(widgetContainer.style, {
+    position: 'fixed',
+    bottom: '0',
+    right: '0',
+    width: '0',
+    height: '0',
+    zIndex: '2147483647',
+    overflow: 'visible'
+  });
+  document.body.appendChild(widgetContainer);
 
-        return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+  const shadow = widgetContainer.attachShadow({ mode: 'closed' });
+
+  // Generate accent color variants
+  function hexToHSL(hex) {
+    let r = parseInt(hex.slice(1, 3), 16) / 255;
+    let g = parseInt(hex.slice(3, 5), 16) / 255;
+    let b = parseInt(hex.slice(5, 7), 16) / 255;
+
+    let max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+
+    if (max === min) {
+      h = s = 0;
+    } else {
+      let d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+        case g: h = ((b - r) / d + 2) / 6; break;
+        case b: h = ((r - g) / d + 4) / 6; break;
+      }
     }
 
-    const accentHSL = hexToHSL(accentColor);
+    return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+  }
 
-    // Sound effects
-    const sounds = {
-        send: () => playTone(800, 0.1, 'sine'),
-        receive: () => playTone(600, 0.15, 'sine'),
-        notification: () => playTone([600, 800], 0.1, 'sine'),
-    };
+  const accentHSL = hexToHSL(accentColor);
 
-    function playTone(freq, duration, type = 'sine') {
-        if (!soundEnabled) return;
-        try {
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
-            const freqs = Array.isArray(freq) ? freq : [freq];
+  // Sound effects
+  const sounds = {
+    send: () => playTone(800, 0.1, 'sine'),
+    receive: () => playTone(600, 0.15, 'sine'),
+    notification: () => playTone([600, 800], 0.1, 'sine'),
+  };
 
-            freqs.forEach((f, i) => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
+  function playTone(freq, duration, type = 'sine') {
+    if (!soundEnabled) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const freqs = Array.isArray(freq) ? freq : [freq];
 
-                osc.connect(gain);
-                gain.connect(ctx.destination);
+      freqs.forEach((f, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
 
-                osc.frequency.value = f;
-                osc.type = type;
-                gain.gain.setValueAtTime(0.1, ctx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
 
-                osc.start(ctx.currentTime + (i * 0.1));
-                osc.stop(ctx.currentTime + duration + (i * 0.1));
-            });
-        } catch (e) {
-            console.warn('[ChatIQ] Sound playback failed:', e);
-        }
+        osc.frequency.value = f;
+        osc.type = type;
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+
+        osc.start(ctx.currentTime + (i * 0.1));
+        osc.stop(ctx.currentTime + duration + (i * 0.1));
+      });
+    } catch (e) {
+      console.warn('[ChatIQ] Sound playback failed:', e);
     }
+  }
 
-    // Design Tokens & Enhanced Styles
-    const styles = `
+  // Design Tokens & Enhanced Styles
+  const styles = `
     /* ===== FONTS ===== */
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -300,13 +367,11 @@
     .launcher {
       position: fixed;
       bottom: 24px;
-      right: 24px;
       bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-      right: calc(24px + env(safe-area-inset-right, 0px));
       width: 64px;
       height: 64px;
       border-radius: var(--radius-full);
-      background: #1D2331;
+      background: var(--accent);
       border: none;
       cursor: pointer;
       display: flex;
@@ -320,6 +385,18 @@
       touch-action: manipulation;
       -webkit-touch-callout: none;
       user-select: none;
+    }
+
+    /* Position: Right (default) */
+    .launcher.position-right {
+      right: 24px;
+      right: calc(24px + env(safe-area-inset-right, 0px));
+    }
+
+    /* Position: Left */
+    .launcher.position-left {
+      left: 24px;
+      left: calc(24px + env(safe-area-inset-left, 0px));
     }
 
     .launcher::before {
@@ -432,7 +509,6 @@
     .panel {
       position: fixed;
       bottom: calc(104px + env(safe-area-inset-bottom, 0px));
-      right: calc(24px + env(safe-area-inset-right, 0px));
       width: 400px;
       height: 600px;
       max-height: calc(100vh - 130px);
@@ -447,8 +523,19 @@
       z-index: var(--z-panel);
       opacity: 0;
       transform: translateY(16px) scale(0.94);
-      transform-origin: bottom right;
       -webkit-overflow-scrolling: touch;
+    }
+
+    /* Panel Position: Right (default) */
+    .panel.position-right {
+      right: calc(24px + env(safe-area-inset-right, 0px));
+      transform-origin: bottom right;
+    }
+
+    /* Panel Position: Left */
+    .panel.position-left {
+      left: calc(24px + env(safe-area-inset-left, 0px));
+      transform-origin: bottom left;
     }
 
     .panel::before {
@@ -1572,8 +1659,8 @@
     }
     `;
 
-    // Enhanced Widget HTML
-    const html = `
+  // Enhanced Widget HTML
+  const html = `
     <style>${styles}</style>
     
     <!-- Launcher -->
@@ -1726,306 +1813,312 @@
     </div>
     `;
 
-    shadow.innerHTML = html;
+  shadow.innerHTML = html;
 
-    // Apply theme class
-    if (currentTheme === 'dark') {
-        shadow.host.classList.add('dark');
+  // Apply theme class
+  if (currentTheme === 'dark') {
+    shadow.host.classList.add('dark');
+  }
+
+  // Get elements
+  const launcher = shadow.getElementById('launcher');
+  const panel = shadow.getElementById('panel');
+
+  // Apply position class
+  const positionClass = position === 'left' ? 'position-left' : 'position-right';
+  launcher?.classList.add(positionClass);
+  panel?.classList.add(positionClass);
+
+  const messages = shadow.getElementById('messages');
+  const welcome = shadow.getElementById('welcome');
+  const input = shadow.getElementById('input');
+  const sendBtn = shadow.getElementById('send-btn');
+  const closeBtn = shadow.getElementById('close-btn');
+  const badge = shadow.getElementById('badge');
+  const attachBtn = shadow.getElementById('attach-btn');
+  const emojiBtn = shadow.getElementById('emoji-btn');
+  const fileInput = shadow.getElementById('file-input');
+  const emojiPicker = shadow.getElementById('emoji-picker');
+  const emojiGrid = shadow.getElementById('emoji-grid');
+  const emojiSearch = shadow.getElementById('emoji-search');
+  const uploadPreview = shadow.getElementById('upload-preview');
+  const uploadThumb = shadow.getElementById('upload-thumb');
+  const uploadName = shadow.getElementById('upload-name');
+  const uploadSize = shadow.getElementById('upload-size');
+  const uploadRemove = shadow.getElementById('upload-remove');
+  const soundBtn = shadow.getElementById('sound-btn');
+  const soundOnIcon = shadow.querySelector('.sound-on-icon');
+  const soundOffIcon = shadow.querySelector('.sound-off-icon');
+  const dropOverlay = shadow.getElementById('drop-overlay');
+  const startBtn = shadow.getElementById('start-btn');
+  const composerContainer = shadow.getElementById('composer-container');
+
+  startBtn?.addEventListener('click', () => {
+    welcome.style.display = 'none';
+    composerContainer.style.display = 'block';
+    input.focus();
+  });
+
+  soundBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    soundEnabled = !soundEnabled;
+    localStorage.setItem('chatiq_sound_enabled', soundEnabled);
+    soundOnIcon.style.display = soundEnabled ? 'block' : 'none';
+    soundOffIcon.style.display = soundEnabled ? 'none' : 'block';
+
+    // Play a test sound to confirm
+    if (soundEnabled) sounds.notification();
+  });
+
+  let isOpen = false;
+  let isTyping = false;
+  let unreadCount = 0;
+  let currentFile = null;
+  const messageHistory = [];
+
+  // Emojis
+  const emojis = ['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥', '😶', '😐', '😑', '😬', '🙄', '😯', '😦', '😧', '😮', '😲', '🥱', '😴', '🤤', '😪', '😵', '🤐', '🥴', '🤢', '🤮', '🤧', '😷', '🤒', '🤕', '🤑', '🤠', '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '👇', '☝️', '✋', '🤚', '🖐', '🖖', '👋', '🤝', '💪', '🦾', '🙏', '✍️', '💅', '🤳', '💃', '🕺', '👯', '🧘', '🛀', '🛌', '👥', '🗣', '👤', '🔥', '⭐', '✨', '💫', '💥', '💯', '💢', '💬', '👁', '🧠', '🫀', '🫁', '🦷', '🦴', '👀', '👁️', '👃', '👂', '🦻', '🧏', '💘', '💝', '💖', '💗', '💓', '💞', '💕', '💟', '❣️', '💔', '❤️', '🧡', '💛', '💚', '💙', '💜', '🤎', '🖤', '🤍', '🎉', '🎊', '🎈', '🎁', '🏆', '🥇', '🥈', '🥉', '⚽', '🏀', '🏈', '⚾', '🥎', '🎾', '🏐', '🏉', '🥏', '🎱', '🪀', '🏓', '🏸', '🏒', '🏑', '🥍', '🏏', '🪃', '🥅', '⛳', '🪁', '🏹', '🎣', '🤿', '🥊', '🥋', '🎽', '🛹', '🛼', '🛷', '⛸', '🥌', '🎿', '⛷', '🏂'];
+
+  // Populate emoji grid
+  function populateEmojis(filter = '') {
+    const filteredEmojis = filter ? emojis.filter(e => e.includes(filter)) : emojis;
+    emojiGrid.innerHTML = filteredEmojis.map(emoji =>
+      `<button class="emoji-btn" data-emoji="${emoji}">${emoji}</button>`
+    ).join('');
+  }
+
+  populateEmojis();
+
+  // Emoji search
+  emojiSearch.addEventListener('input', (e) => {
+    populateEmojis(e.target.value.toLowerCase());
+  });
+
+  // Emoji picker events
+  emojiGrid.addEventListener('click', (e) => {
+    const btn = e.target.closest('.emoji-btn');
+    if (btn) {
+      const emoji = btn.dataset.emoji;
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+      const text = input.value;
+      input.value = text.substring(0, start) + emoji + text.substring(end);
+      input.selectionStart = input.selectionEnd = start + emoji.length;
+
+      autoResize();
+      sendBtn.disabled = !input.value.trim();
+      emojiPicker.classList.remove('visible');
+      input.focus();
+    }
+  });
+
+  emojiBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    emojiPicker.classList.toggle('visible');
+  });
+
+  // Close emoji picker when clicking outside
+  shadow.addEventListener('click', (e) => {
+    if (!emojiBtn.contains(e.target) && !emojiPicker.contains(e.target)) {
+      emojiPicker.classList.remove('visible');
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.target !== widgetContainer) {
+      emojiPicker.classList.remove('visible');
+    }
+  });
+
+  // File upload
+  attachBtn.addEventListener('click', () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    handleFileSelect(e.target.files[0]);
+  });
+
+  uploadRemove.addEventListener('click', () => {
+    clearFileUpload();
+  });
+
+  function handleFileSelect(file) {
+    if (!file) return;
+
+    if (file.size > MAX_FILE_SIZE) {
+      alert('File size must be less than 10MB');
+      return;
     }
 
-    // Get elements
-    const launcher = shadow.getElementById('launcher');
-    const panel = shadow.getElementById('panel');
-    const messages = shadow.getElementById('messages');
-    const welcome = shadow.getElementById('welcome');
-    const input = shadow.getElementById('input');
-    const sendBtn = shadow.getElementById('send-btn');
-    const closeBtn = shadow.getElementById('close-btn');
-    const badge = shadow.getElementById('badge');
-    const attachBtn = shadow.getElementById('attach-btn');
-    const emojiBtn = shadow.getElementById('emoji-btn');
-    const fileInput = shadow.getElementById('file-input');
-    const emojiPicker = shadow.getElementById('emoji-picker');
-    const emojiGrid = shadow.getElementById('emoji-grid');
-    const emojiSearch = shadow.getElementById('emoji-search');
-    const uploadPreview = shadow.getElementById('upload-preview');
-    const uploadThumb = shadow.getElementById('upload-thumb');
-    const uploadName = shadow.getElementById('upload-name');
-    const uploadSize = shadow.getElementById('upload-size');
-    const uploadRemove = shadow.getElementById('upload-remove');
-    const soundBtn = shadow.getElementById('sound-btn');
-    const soundOnIcon = shadow.querySelector('.sound-on-icon');
-    const soundOffIcon = shadow.querySelector('.sound-off-icon');
-    const dropOverlay = shadow.getElementById('drop-overlay');
-    const startBtn = shadow.getElementById('start-btn');
-    const composerContainer = shadow.getElementById('composer-container');
+    currentFile = file;
+    uploadName.textContent = file.name;
+    uploadSize.textContent = formatFileSize(file.size);
 
-    startBtn?.addEventListener('click', () => {
-        welcome.style.display = 'none';
-        composerContainer.style.display = 'block';
-        input.focus();
-    });
-
-    soundBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        soundEnabled = !soundEnabled;
-        localStorage.setItem('chatiq_sound_enabled', soundEnabled);
-        soundOnIcon.style.display = soundEnabled ? 'block' : 'none';
-        soundOffIcon.style.display = soundEnabled ? 'none' : 'block';
-
-        // Play a test sound to confirm
-        if (soundEnabled) sounds.notification();
-    });
-
-    let isOpen = false;
-    let isTyping = false;
-    let unreadCount = 0;
-    let currentFile = null;
-    const messageHistory = [];
-
-    // Emojis
-    const emojis = ['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥', '😶', '😐', '😑', '😬', '🙄', '😯', '😦', '😧', '😮', '😲', '🥱', '😴', '🤤', '😪', '😵', '🤐', '🥴', '🤢', '🤮', '🤧', '😷', '🤒', '🤕', '🤑', '🤠', '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '👇', '☝️', '✋', '🤚', '🖐', '🖖', '👋', '🤝', '💪', '🦾', '🙏', '✍️', '💅', '🤳', '💃', '🕺', '👯', '🧘', '🛀', '🛌', '👥', '🗣', '👤', '🔥', '⭐', '✨', '💫', '💥', '💯', '💢', '💬', '👁', '🧠', '🫀', '🫁', '🦷', '🦴', '👀', '👁️', '👃', '👂', '🦻', '🧏', '💘', '💝', '💖', '💗', '💓', '💞', '💕', '💟', '❣️', '💔', '❤️', '🧡', '💛', '💚', '💙', '💜', '🤎', '🖤', '🤍', '🎉', '🎊', '🎈', '🎁', '🏆', '🥇', '🥈', '🥉', '⚽', '🏀', '🏈', '⚾', '🥎', '🎾', '🏐', '🏉', '🥏', '🎱', '🪀', '🏓', '🏸', '🏒', '🏑', '🥍', '🏏', '🪃', '🥅', '⛳', '🪁', '🏹', '🎣', '🤿', '🥊', '🥋', '🎽', '🛹', '🛼', '🛷', '⛸', '🥌', '🎿', '⛷', '🏂'];
-
-    // Populate emoji grid
-    function populateEmojis(filter = '') {
-        const filteredEmojis = filter ? emojis.filter(e => e.includes(filter)) : emojis;
-        emojiGrid.innerHTML = filteredEmojis.map(emoji =>
-            `<button class="emoji-btn" data-emoji="${emoji}">${emoji}</button>`
-        ).join('');
-    }
-
-    populateEmojis();
-
-    // Emoji search
-    emojiSearch.addEventListener('input', (e) => {
-        populateEmojis(e.target.value.toLowerCase());
-    });
-
-    // Emoji picker events
-    emojiGrid.addEventListener('click', (e) => {
-        const btn = e.target.closest('.emoji-btn');
-        if (btn) {
-            const emoji = btn.dataset.emoji;
-            const start = input.selectionStart;
-            const end = input.selectionEnd;
-            const text = input.value;
-            input.value = text.substring(0, start) + emoji + text.substring(end);
-            input.selectionStart = input.selectionEnd = start + emoji.length;
-
-            autoResize();
-            sendBtn.disabled = !input.value.trim();
-            emojiPicker.classList.remove('visible');
-            input.focus();
-        }
-    });
-
-    emojiBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        emojiPicker.classList.toggle('visible');
-    });
-
-    // Close emoji picker when clicking outside
-    shadow.addEventListener('click', (e) => {
-        if (!emojiBtn.contains(e.target) && !emojiPicker.contains(e.target)) {
-            emojiPicker.classList.remove('visible');
-        }
-    });
-
-    document.addEventListener('click', (e) => {
-        if (e.target !== widgetContainer) {
-            emojiPicker.classList.remove('visible');
-        }
-    });
-
-    // File upload
-    attachBtn.addEventListener('click', () => {
-        fileInput.click();
-    });
-
-    fileInput.addEventListener('change', (e) => {
-        handleFileSelect(e.target.files[0]);
-    });
-
-    uploadRemove.addEventListener('click', () => {
-        clearFileUpload();
-    });
-
-    function handleFileSelect(file) {
-        if (!file) return;
-
-        if (file.size > MAX_FILE_SIZE) {
-            alert('File size must be less than 10MB');
-            return;
-        }
-
-        currentFile = file;
-        uploadName.textContent = file.name;
-        uploadSize.textContent = formatFileSize(file.size);
-
-        if (file.type.startsWith('image/')) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                uploadThumb.innerHTML = `<img src="${e.target.result}" alt="${file.name}">`;
-            };
-            reader.readAsDataURL(file);
-        } else {
-            uploadThumb.innerHTML = `
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        uploadThumb.innerHTML = `<img src="${e.target.result}" alt="${file.name}">`;
+      };
+      reader.readAsDataURL(file);
+    } else {
+      uploadThumb.innerHTML = `
                 <svg viewBox="0 0 24 24">
                     <path d="M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z"/>
                 </svg>
             `;
-        }
-
-        uploadPreview.classList.add('visible');
     }
 
-    function clearFileUpload() {
-        currentFile = null;
-        fileInput.value = '';
-        uploadPreview.classList.remove('visible');
+    uploadPreview.classList.add('visible');
+  }
+
+  function clearFileUpload() {
+    currentFile = null;
+    fileInput.value = '';
+    uploadPreview.classList.remove('visible');
+  }
+
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // Drag & Drop
+  let dragCounter = 0;
+
+  panel.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCounter++;
+    if (dragCounter === 1) {
+      dropOverlay.classList.add('visible');
     }
+  });
 
-    function formatFileSize(bytes) {
-        if (bytes < 1024) return bytes + ' B';
-        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  panel.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter === 0) {
+      dropOverlay.classList.remove('visible');
     }
+  });
 
-    // Drag & Drop
-    let dragCounter = 0;
+  panel.addEventListener('dragover', (e) => {
+    e.preventDefault();
+  });
 
-    panel.addEventListener('dragenter', (e) => {
-        e.preventDefault();
-        dragCounter++;
-        if (dragCounter === 1) {
-            dropOverlay.classList.add('visible');
-        }
+  panel.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    dropOverlay.classList.remove('visible');
+
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      handleFileSelect(file);
+    }
+  });
+
+  // Draft persistence
+  const DRAFT_KEY = `chatiq_draft_${siteId}`;
+
+  function saveDraft() {
+    localStorage.setItem(DRAFT_KEY, input.value);
+  }
+
+  function loadDraft() {
+    const draft = localStorage.getItem(DRAFT_KEY);
+    if (draft) {
+      input.value = draft;
+      autoResize();
+      sendBtn.disabled = !draft.trim();
+    }
+  }
+
+  function clearDraft() {
+    localStorage.removeItem(DRAFT_KEY);
+  }
+
+  // Auto-resize textarea
+  function autoResize() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  }
+
+  input.addEventListener('input', () => {
+    autoResize();
+    sendBtn.disabled = !input.value.trim();
+    saveDraft();
+  });
+
+  // Scroll management
+  function scrollToBottom(smooth = true) {
+    messages.scrollTo({
+      top: messages.scrollHeight,
+      behavior: smooth ? 'smooth' : 'auto'
     });
+  }
 
-    panel.addEventListener('dragleave', (e) => {
-        e.preventDefault();
-        dragCounter--;
-        if (dragCounter === 0) {
-            dropOverlay.classList.remove('visible');
-        }
-    });
-
-    panel.addEventListener('dragover', (e) => {
-        e.preventDefault();
-    });
-
-    panel.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dragCounter = 0;
-        dropOverlay.classList.remove('visible');
-
-        const file = e.dataTransfer.files[0];
-        if (file) {
-            handleFileSelect(file);
-        }
-    });
-
-    // Draft persistence
-    const DRAFT_KEY = `chatiq_draft_${siteId}`;
-
-    function saveDraft() {
-        localStorage.setItem(DRAFT_KEY, input.value);
+  // Badge
+  function updateBadge(count) {
+    unreadCount = count;
+    if (count > 0) {
+      badge.textContent = count > 9 ? '9+' : count;
+      badge.classList.add('visible');
+      if (!isOpen) {
+        launcher.classList.add('pulse');
+      }
+    } else {
+      badge.classList.remove('visible');
+      launcher.classList.remove('pulse');
     }
+  }
 
-    function loadDraft() {
-        const draft = localStorage.getItem(DRAFT_KEY);
-        if (draft) {
-            input.value = draft;
-            autoResize();
-            sendBtn.disabled = !draft.trim();
-        }
-    }
+  // Toggle widget
+  function openWidget() {
+    if (isOpen) return;
+    isOpen = true;
+    launcher.classList.add('open');
+    launcher.classList.remove('pulse');
+    panel.classList.add('open');
+    panel.classList.remove('closing');
+    launcher.setAttribute('aria-label', 'Close chat');
+    input.focus();
+    updateBadge(0);
+    scrollToBottom(false);
+    loadDraft();
+  }
 
-    function clearDraft() {
-        localStorage.removeItem(DRAFT_KEY);
-    }
+  function closeWidget() {
+    if (!isOpen) return;
+    isOpen = false;
+    launcher.classList.remove('open');
+    panel.classList.add('closing');
+    launcher.setAttribute('aria-label', 'Open chat');
+    emojiPicker.classList.remove('visible');
 
-    // Auto-resize textarea
-    function autoResize() {
-        input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-    }
+    if (input.value.trim()) saveDraft();
 
-    input.addEventListener('input', () => {
-        autoResize();
-        sendBtn.disabled = !input.value.trim();
-        saveDraft();
-    });
+    setTimeout(() => {
+      panel.classList.remove('open', 'closing');
+    }, 200);
+  }
 
-    // Scroll management
-    function scrollToBottom(smooth = true) {
-        messages.scrollTo({
-            top: messages.scrollHeight,
-            behavior: smooth ? 'smooth' : 'auto'
-        });
-    }
+  function toggleWidget() {
+    isOpen ? closeWidget() : openWidget();
+  }
 
-    // Badge
-    function updateBadge(count) {
-        unreadCount = count;
-        if (count > 0) {
-            badge.textContent = count > 9 ? '9+' : count;
-            badge.classList.add('visible');
-            if (!isOpen) {
-                launcher.classList.add('pulse');
-            }
-        } else {
-            badge.classList.remove('visible');
-            launcher.classList.remove('pulse');
-        }
-    }
+  // Typing indicator
+  function showTyping() {
+    if (isTyping) return;
+    isTyping = true;
 
-    // Toggle widget
-    function openWidget() {
-        if (isOpen) return;
-        isOpen = true;
-        launcher.classList.add('open');
-        launcher.classList.remove('pulse');
-        panel.classList.add('open');
-        panel.classList.remove('closing');
-        launcher.setAttribute('aria-label', 'Close chat');
-        input.focus();
-        updateBadge(0);
-        scrollToBottom(false);
-        loadDraft();
-    }
+    if (welcome) welcome.style.display = 'none';
+    if (composerContainer) composerContainer.style.display = 'block';
 
-    function closeWidget() {
-        if (!isOpen) return;
-        isOpen = false;
-        launcher.classList.remove('open');
-        panel.classList.add('closing');
-        launcher.setAttribute('aria-label', 'Open chat');
-        emojiPicker.classList.remove('visible');
-
-        if (input.value.trim()) saveDraft();
-
-        setTimeout(() => {
-            panel.classList.remove('open', 'closing');
-        }, 200);
-    }
-
-    function toggleWidget() {
-        isOpen ? closeWidget() : openWidget();
-    }
-
-    // Typing indicator
-    function showTyping() {
-        if (isTyping) return;
-        isTyping = true;
-
-        if (welcome) welcome.style.display = 'none';
-        if (composerContainer) composerContainer.style.display = 'block';
-
-        const typing = document.createElement('div');
-        typing.className = 'typing';
-        typing.id = 'typing';
-        typing.innerHTML = `
+    const typing = document.createElement('div');
+    typing.className = 'typing';
+    typing.id = 'typing';
+    typing.innerHTML = `
           <div class="typing-avatar">
             <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
           </div>
@@ -2038,40 +2131,40 @@
             </div>
           </div>
         `;
-        messages.appendChild(typing);
-        scrollToBottom();
-    }
+    messages.appendChild(typing);
+    scrollToBottom();
+  }
 
-    function hideTyping() {
-        isTyping = false;
-        const typing = shadow.getElementById('typing');
-        if (typing) typing.remove();
-    }
+  function hideTyping() {
+    isTyping = false;
+    const typing = shadow.getElementById('typing');
+    if (typing) typing.remove();
+  }
 
-    // Format time
-    function formatTime(date) {
-        return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    }
+  // Format time
+  function formatTime(date) {
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
 
-    // Add message
-    function addMessage(text, from = 'user', attachment = null) {
-        hideTyping();
+  // Add message
+  function addMessage(text, from = 'user', attachment = null) {
+    hideTyping();
 
-        if (welcome) welcome.style.display = 'none';
-        if (composerContainer) composerContainer.style.display = 'block';
+    if (welcome) welcome.style.display = 'none';
+    if (composerContainer) composerContainer.style.display = 'block';
 
-        const now = new Date();
-        const msg = document.createElement('div');
-        msg.className = `message ${from}`;
+    const now = new Date();
+    const msg = document.createElement('div');
+    msg.className = `message ${from}`;
 
-        const avatarHTML = from === 'bot' ? `
+    const avatarHTML = from === 'bot' ? `
           <div class="message-avatar">
             <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
           </div>
         ` : '';
 
-        const attachmentHTML = attachment ? (
-            attachment.type === 'image' ? `
+    const attachmentHTML = attachment ? (
+      attachment.type === 'image' ? `
                 <div class="message-attachment">
                     <img src="${attachment.url}" alt="${attachment.name}" class="attachment-image">
                 </div>
@@ -2090,16 +2183,16 @@
                     </div>
                 </div>
             `
-        ) : '';
+    ) : '';
 
-        const statusHTML = from === 'user' ? `
+    const statusHTML = from === 'user' ? `
             <div class="message-status">
                 <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
                 <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
             </div>
         ` : '';
 
-        msg.innerHTML = `
+    msg.innerHTML = `
           ${avatarHTML}
           <div class="message-content">
             <div class="message-bubble">${escapeHtml(text)}${attachmentHTML}</div>
@@ -2110,162 +2203,149 @@
           </div>
         `;
 
-        messages.appendChild(msg);
-        scrollToBottom(true);
+    messages.appendChild(msg);
+    scrollToBottom(true);
 
-        if (!isOpen && from === 'bot') {
-            updateBadge(unreadCount + 1);
-            sounds.notification();
-        } else if (from === 'user') {
-            sounds.send();
-        } else if (from === 'bot') {
-            sounds.receive();
-        }
-
-        messageHistory.push({ text, from, timestamp: Date.now(), attachment });
+    if (!isOpen && from === 'bot') {
+      updateBadge(unreadCount + 1);
+      sounds.notification();
+    } else if (from === 'user') {
+      sounds.send();
+    } else if (from === 'bot') {
+      sounds.receive();
     }
 
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
+    messageHistory.push({ text, from, timestamp: Date.now(), attachment });
+  }
 
-    // Show quick replies
-    function showQuickReplies(replies) {
-        const quickReplies = document.createElement('div');
-        quickReplies.className = 'quick-replies';
-        quickReplies.innerHTML = replies.map(reply =>
-            `<button class="quick-reply" data-text="${escapeHtml(reply)}">${escapeHtml(reply)}</button>`
-        ).join('');
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
 
-        messages.appendChild(quickReplies);
-        scrollToBottom();
+  // Show quick replies
+  function showQuickReplies(replies) {
+    const quickReplies = document.createElement('div');
+    quickReplies.className = 'quick-replies';
+    quickReplies.innerHTML = replies.map(reply =>
+      `<button class="quick-reply" data-text="${escapeHtml(reply)}">${escapeHtml(reply)}</button>`
+    ).join('');
 
-        // Handle quick reply clicks
-        quickReplies.addEventListener('click', (e) => {
-            const btn = e.target.closest('.quick-reply');
-            if (btn) {
-                const text = btn.dataset.text;
-                input.value = text;
-                sendMessage();
-                quickReplies.remove();
-            }
-        });
-    }
+    messages.appendChild(quickReplies);
+    scrollToBottom();
 
-    // Send message
-    function sendMessage() {
-        const text = input.value.trim();
-        if (!text && !currentFile) return;
-
-        let attachment = null;
-        if (currentFile) {
-            attachment = {
-                name: currentFile.name,
-                size: formatFileSize(currentFile.size),
-                type: currentFile.type.startsWith('image/') ? 'image' : 'file',
-                url: currentFile.type.startsWith('image/') ? URL.createObjectURL(currentFile) : null
-            };
-        }
-
-        addMessage(text || '📎 File attached', 'user', attachment);
-        input.value = '';
-        input.style.height = 'auto';
-        sendBtn.disabled = true;
-        clearDraft();
-        clearFileUpload();
-
-        console.log('[ChatIQ] Message sent:', { siteId, visitorId, text, attachment: currentFile?.name });
-
-        // Simulate response
-        setTimeout(() => {
-            showTyping();
-            setTimeout(() => {
-                addMessage('Thanks for your message! Our team will get back to you shortly.', 'bot');
-
-                // Show quick replies after bot message
-                setTimeout(() => {
-                    showQuickReplies([
-                        'I need help with my order',
-                        'Technical support',
-                        'Billing question',
-                        'Other'
-                    ]);
-                }, 500);
-            }, 1500);
-        }, 400);
-    }
-
-    // Theme toggle
-    function setTheme(theme) {
-        currentTheme = theme;
-        localStorage.setItem('chatiq_theme', theme);
-        shadow.host.classList.toggle('dark', theme === 'dark');
-    }
-
-    function toggleTheme() {
-        setTheme(currentTheme === 'light' ? 'dark' : 'light');
-    }
-
-    // Event listeners
-    launcher.addEventListener('click', toggleWidget);
-    closeBtn.addEventListener('click', closeWidget);
-    sendBtn.addEventListener('click', sendMessage);
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && isOpen) {
-            closeWidget();
-            emojiPicker.classList.remove('visible');
-        }
+    // Handle quick reply clicks
+    quickReplies.addEventListener('click', (e) => {
+      const btn = e.target.closest('.quick-reply');
+      if (btn) {
+        const text = btn.dataset.text;
+        input.value = text;
+        sendMessage();
+        quickReplies.remove();
+      }
     });
+  }
 
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    });
+  // Send message
+  function sendMessage() {
+    const text = input.value.trim();
+    if (!text && !currentFile) return;
 
-    // System theme listener
-    if (config.theme === 'auto') {
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-            setTheme(e.matches ? 'dark' : 'light');
-        });
+    let attachment = null;
+    if (currentFile) {
+      attachment = {
+        name: currentFile.name,
+        size: formatFileSize(currentFile.size),
+        type: currentFile.type.startsWith('image/') ? 'image' : 'file',
+        url: currentFile.type.startsWith('image/') ? URL.createObjectURL(currentFile) : null
+      };
     }
 
-    // Expose API
-    globalThis.ChatIQ = {
-        version: WIDGET_VERSION,
-        siteId,
-        visitorId,
-        open: openWidget,
-        close: closeWidget,
-        toggle: toggleWidget,
-        sendMessage: (text, attachment) => addMessage(text, 'user', attachment),
-        setTheme,
-        toggleTheme,
-        setUnreadCount: updateBadge,
-        showQuickReplies,
-        setAccentColor: (color) => {
-            const hsl = hexToHSL(color);
-            shadow.host.style.setProperty('--accent-h', hsl.h);
-            shadow.host.style.setProperty('--accent-s', `${hsl.s}%`);
-            shadow.host.style.setProperty('--accent-l', `${hsl.l}%`);
-            shadow.host.style.setProperty('--accent-text', hsl.l > 60 ? '#000000' : '#FFFFFF');
-        },
-        simulateMessage: (text, quickReplies) => {
-            showTyping();
-            setTimeout(() => {
-                addMessage(text, 'bot');
-                if (quickReplies) {
-                    setTimeout(() => showQuickReplies(quickReplies), 500);
-                }
-            }, 1000);
-        },
-        playSound: (type) => sounds[type]?.(),
-    };
+    addMessage(text || '📎 File attached', 'user', attachment);
 
-    console.log('[ChatIQ] Enhanced Widget ready');
-    console.log('[ChatIQ] New features: File upload, Emoji picker, Quick replies, Sounds, Enhanced UI');
+    if (socket) {
+      socket.emit('visitor:message', { siteId, visitorId, text });
+    }
+
+    input.value = '';
+    input.style.height = 'auto';
+    sendBtn.disabled = true;
+    clearDraft();
+    clearFileUpload();
+
+    console.log('[ChatIQ] Message sent:', { siteId, visitorId, text });
+  }
+
+  // Theme toggle
+  function setTheme(theme) {
+    currentTheme = theme;
+    localStorage.setItem('chatiq_theme', theme);
+    shadow.host.classList.toggle('dark', theme === 'dark');
+  }
+
+  function toggleTheme() {
+    setTheme(currentTheme === 'light' ? 'dark' : 'light');
+  }
+
+  // Event listeners
+  launcher.addEventListener('click', toggleWidget);
+  closeBtn.addEventListener('click', closeWidget);
+  sendBtn.addEventListener('click', sendMessage);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isOpen) {
+      closeWidget();
+      emojiPicker.classList.remove('visible');
+    }
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // System theme listener
+  if (config.theme === 'auto') {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      setTheme(e.matches ? 'dark' : 'light');
+    });
+  }
+
+  // Expose API
+  globalThis.ChatIQ = {
+    version: WIDGET_VERSION,
+    siteId,
+    visitorId,
+    open: openWidget,
+    close: closeWidget,
+    toggle: toggleWidget,
+    sendMessage: (text, attachment) => addMessage(text, 'user', attachment),
+    setTheme,
+    toggleTheme,
+    setUnreadCount: updateBadge,
+    showQuickReplies,
+    setAccentColor: (color) => {
+      const hsl = hexToHSL(color);
+      shadow.host.style.setProperty('--accent-h', hsl.h);
+      shadow.host.style.setProperty('--accent-s', `${hsl.s}%`);
+      shadow.host.style.setProperty('--accent-l', `${hsl.l}%`);
+      shadow.host.style.setProperty('--accent-text', hsl.l > 60 ? '#000000' : '#FFFFFF');
+    },
+    simulateMessage: (text, quickReplies) => {
+      showTyping();
+      setTimeout(() => {
+        addMessage(text, 'bot');
+        if (quickReplies) {
+          setTimeout(() => showQuickReplies(quickReplies), 500);
+        }
+      }, 1000);
+    },
+    playSound: (type) => sounds[type]?.(),
+  };
+
+  console.log('[ChatIQ] Enhanced Widget ready');
+  console.log('[ChatIQ] New features: File upload, Emoji picker, Quick replies, Sounds, Enhanced UI');
 })();
