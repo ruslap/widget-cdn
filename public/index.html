@@ -469,17 +469,16 @@
                 </button>
             </div>
             <div class="code-block">
-                <pre><span class="comment">&lt;!-- Add this before &lt;/body&gt; --&gt;</span>
-<span class="tag">&lt;script&gt;</span>
-  <span class="attr">window.chtq</span> = {
-    <span class="attr">organizationId</span>: <span class="string">"demo123"</span>,
-    <span class="attr">language</span>: <span class="string">"uk"</span>,
-    <span class="attr">color</span>: <span class="string">"#6366F1"</span>,
-    <span class="attr">position</span>: <span class="string">"right"</span>,
-    <span class="attr">size</span>: <span class="string">"standard"</span>
-  };
-<span class="tag">&lt;/script&gt;</span>
-<span class="tag">&lt;script</span> <span class="attr">async src</span>=<span class="value">"https://widget-cdn-chatiq.vercel.app/widget.js"</span><span class="tag">&gt;&lt;/script&gt;</span></pre>
+                <script async src="https://widget-cdn-chatiq.vercel.app/widget.js"></script>
+                <script>
+                    window.chtq = {
+                        organizationId: "3e48c511-bf70-400f-a358-ff82f46ed5a4",
+                        language: "uk",
+                        color: "#6366F1",
+                        position: "right",
+                        size: "standard"
+                    }
+                </script>
             </div>
         </div>
     </main>
@@ -500,31 +499,30 @@
         <a href="#">GitHub</a>
     </footer>
 
-    <!-- ChatIQ Widget (with new Chtq config format) -->
+    <script async src="https://widget-cdn-chatiq.vercel.app/widget.js"></script>
     <script>
         window.chtq = {
-            organizationId: "demo123",
+            organizationId: "3e48c511-bf70-400f-a358-ff82f46ed5a4",
             language: "uk",
             color: "#6366F1",
             position: "right",
             size: "standard"
         };
     </script>
-    <script async src="https://widget-cdn-chatiq.vercel.app/widget.js"></script>
     <script>
         document.querySelector('.copy-btn').addEventListener('click', function () {
             // Використовуємо екранування \x3C (<) та \x3E (>), щоб уникнути помилок парсингу
             const code = '\x3C!-- Add this before \x3C/body\x3E --\x3E\n' +
+                '\x3Cscript async src="https://widget-cdn-chatiq.vercel.app/widget.js"\x3E\x3C/script\x3E\n' +
                 '\x3Cscript\x3E\n' +
                 '  window.chtq = {\n' +
-                '    organizationId: "demo123",\n' +
+                '    organizationId: "3e48c511-bf70-400f-a358-ff82f46ed5a4",\n' +
                 '    language: "uk",\n' +
                 '    color: "#6366F1",\n' +
                 '    position: "right",\n' +
                 '    size: "standard"\n' +
                 '  };\n' +
-                '\x3C/script\x3E\n' +
-                '\x3Cscript async src="https://widget-cdn-chatiq.vercel.app/widget.js"\x3E\x3C/script\x3E';
+                '\x3C/script\x3E';
 
             navigator.clipboard.writeText(code).then(() => {
                 const btn = this;
